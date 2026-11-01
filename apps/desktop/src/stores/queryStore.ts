@@ -4666,6 +4666,7 @@ export const useQueryStore = defineStore("query", () => {
     return openPluginFilesystem(pluginId, filesystem.contribution.id, {
       title: `${connection.name} · SFTP`,
       connectionId,
+      forceNew: options.forceNew,
       rootUri: filesystem.contribution.root_uri,
     });
   }

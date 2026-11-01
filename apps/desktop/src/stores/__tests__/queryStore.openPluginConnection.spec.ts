@@ -5,12 +5,28 @@ import { useQueryStore } from "@/stores/queryStore";
 const mocks = vi.hoisted(() => ({ ensureConnected: vi.fn(async () => undefined) }));
 vi.mock("@/stores/connectionStore", () => ({
   useConnectionStore: () => ({
-    getConfig: (id: string) => ({ id, name: "Cosmos dev", db_type: "plugin", plugin_id: "io.test.cosmos", plugin_connection_provider: "connection", plugin_connection_type: "cosmosdb-nosql" }),
+    getConfig: (id: string) =>
+      id === "files"
+        ? { id, name: "Files dev", db_type: "plugin", plugin_id: "io.test.files", plugin_connection_provider: "connection", plugin_connection_type: "sftp" }
+        : { id, name: "Cosmos dev", db_type: "plugin", plugin_id: "io.test.cosmos", plugin_connection_provider: "connection", plugin_connection_type: "cosmosdb-nosql" },
     ensureConnected: mocks.ensureConnected,
   }),
 }));
 vi.mock("@/lib/backend/api", () => ({
   listPlugins: async () => [
+    {
+      compatibility: { compatible: true },
+      manifest: {
+        id: "io.test.files",
+        name: "Files",
+        version: "1.0.0",
+        drivers: [],
+        contributions: [
+          { type: "connection-provider", id: "connection", label: "Files", filesystem_provider: "files", database_type: "sftp", fields: [] },
+          { type: "filesystem-provider", id: "files", label: "Files", root_uri: "sftp:///" },
+        ],
+      },
+    },
     {
       compatibility: { compatible: true },
       manifest: {
@@ -58,5 +74,30 @@ describe("plugin connection New Query", () => {
     const store = useQueryStore();
     await expect(store.openPluginConnection("dev", { forceNew: true })).rejects.toThrow("offline");
     expect(store.tabs).toHaveLength(0);
+  });
+  it("reuses filesystem-only connection tabs on reopen but creates independent tabs for New Query", async () => {
+    const store = useQueryStore();
+    const first = await store.openPluginConnection("files");
+    expect(await store.openPluginConnection("files")).toBe(first);
+    const original = store.tabs.find((tab) => tab.id === first)!;
+    original.pluginFilesystem!.currentUri = "sftp:///original";
+
+    const second = await store.openPluginConnection("files", { forceNew: true });
+    expect(second).not.toBe(first);
+    expect(store.tabs).toHaveLength(2);
+    expect(store.activeTabId).toBe(second);
+    expect(store.groups.some((group) => group.tabIds.includes(second!))).toBe(true);
+    const created = store.tabs.find((tab) => tab.id === second)!;
+    expect(created).toMatchObject({
+      mode: "plugin-filesystem",
+      connectionId: "files",
+      pluginFilesystem: { pluginId: "io.test.files", providerId: "files", rootUri: "sftp:///" },
+    });
+    expect(created.pluginFilesystem?.currentUri).toBeUndefined();
+    created.pluginFilesystem!.currentUri = "sftp:///new";
+    expect(original.pluginFilesystem?.currentUri).toBe("sftp:///original");
+    expect(await store.openPluginConnection("files")).toBe(first);
+    expect(store.activeTabId).toBe(first);
+    expect(store.tabs).toHaveLength(2);
   });
 });
